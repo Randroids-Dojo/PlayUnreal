@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "PlayUnreal Automation",
+	"Description": "Playwright-style automation surface for Unreal Engine. Exposes BlueprintCallable functions for external test scripts via Remote Control API.",
+	"Category": "Testing",
+	"CreatedBy": "PlayUnreal",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Modules": [
+		{
+			"Name": "PlayUnrealAutomation",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "RemoteControl",
+			"Enabled": true
+		}
+	]
+}
