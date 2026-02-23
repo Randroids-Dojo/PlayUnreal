@@ -375,8 +375,16 @@ class PlayUnreal:
         truly ready before returning.
         """
         gm_path = self._get_gm_path()
-        self._call_function(gm_path, "ReturnToTitle")
-        time.sleep(2.0)
+        # Retry ReturnToTitle until Title is confirmed. From GameOver the
+        # command is ignored until the GameOver screen auto-dismisses, which
+        # can take several seconds. From Playing it resolves in < 0.5s.
+        for _ in range(10):
+            self._call_function(gm_path, "ReturnToTitle")
+            try:
+                self.wait_for_state("Title", timeout=4)
+                break
+            except PlayUnrealError:
+                time.sleep(1.0)
         self._call_function(gm_path, "StartGame")
         self.wait_for_state("Playing", timeout=15)
 
