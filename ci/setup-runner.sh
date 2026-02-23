@@ -9,6 +9,10 @@
 #   --runner-dir DIR    Where to install the runner (default: ~/actions-runner)
 #   --runner-name NAME  Runner name (default: <hostname>-mac-ue)
 #   --check-only        Only verify prerequisites, don't install
+#   --start             Start the runner service
+#   --stop              Stop the runner service
+#   --restart           Restart the runner service
+#   --status            Show runner service status
 #   --uninstall         Remove the runner service and deregister
 #
 # How to get a registration token:
@@ -33,6 +37,7 @@ RUNNER_LABELS="self-hosted,macOS,unreal-engine"
 REG_TOKEN=""
 CHECK_ONLY=false
 UNINSTALL=false
+ACTION=""  # start | stop | restart | status
 
 # ── Parse arguments ────────────────────────────────────────────────────────────
 
@@ -42,9 +47,13 @@ while [[ $# -gt 0 ]]; do
         --runner-dir) RUNNER_DIR="$2"; shift 2 ;;
         --runner-name) RUNNER_NAME="$2"; shift 2 ;;
         --check-only) CHECK_ONLY=true; shift ;;
+        --start)      ACTION=start; shift ;;
+        --stop)       ACTION=stop; shift ;;
+        --restart)    ACTION=restart; shift ;;
+        --status)     ACTION=status; shift ;;
         --uninstall)  UNINSTALL=true; shift ;;
         -h|--help)
-            sed -n '2,30p' "$0"   # print the header comment
+            sed -n '2,35p' "$0"   # print the header comment
             exit 0 ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
@@ -56,6 +65,37 @@ ok()   { echo "  [OK]   $*"; }
 fail() { echo "  [FAIL] $*"; }
 info() { echo "  [INFO] $*"; }
 hr()   { echo "──────────────────────────────────────────────────────────────────"; }
+
+# ── Start / Stop / Restart / Status ───────────────────────────────────────────
+
+if [ -n "${ACTION}" ]; then
+    if [ ! -d "${RUNNER_DIR}" ]; then
+        echo "Runner directory not found: ${RUNNER_DIR}"
+        echo "Run ./ci/setup-runner.sh --token <TOKEN> to install first."
+        exit 1
+    fi
+    cd "${RUNNER_DIR}"
+    case "${ACTION}" in
+        start)
+            echo "Starting runner service..."
+            ./svc.sh start
+            ;;
+        stop)
+            echo "Stopping runner service..."
+            ./svc.sh stop
+            ;;
+        restart)
+            echo "Restarting runner service..."
+            ./svc.sh stop
+            sleep 2
+            ./svc.sh start
+            ;;
+        status)
+            ./svc.sh status
+            ;;
+    esac
+    exit 0
+fi
 
 # ── Uninstall path ─────────────────────────────────────────────────────────────
 
