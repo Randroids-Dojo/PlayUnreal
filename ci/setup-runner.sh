@@ -5,10 +5,11 @@
 #   ./ci/setup-runner.sh [OPTIONS]
 #
 # Options:
-#   --token TOKEN       GitHub runner registration token (required unless --check-only)
-#   --runner-dir DIR    Where to install the runner (default: ~/actions-runner)
-#   --runner-name NAME  Runner name (default: <hostname>-mac-ue)
-#   --check-only        Only verify prerequisites, don't install
+#   --token TOKEN           GitHub runner registration token (required unless --check-only)
+#   --runner-dir DIR        Where to install the runner (default: ~/actions-runner)
+#   --runner-name NAME      Runner name (default: <hostname>-mac-ue)
+#   --project-file PATH     Absolute path to the .uproject file on this machine
+#   --check-only            Only verify prerequisites, don't install
 #   --start             Start the runner service
 #   --stop              Stop the runner service
 #   --restart           Restart the runner service
@@ -35,6 +36,7 @@ RUNNER_DIR="${HOME}/actions-runner"
 RUNNER_NAME="$(hostname -s)-mac-ue"
 RUNNER_LABELS="self-hosted,macOS,unreal-engine"
 REG_TOKEN=""
+PROJECT_FILE=""
 CHECK_ONLY=false
 UNINSTALL=false
 ACTION=""  # start | stop | restart | status
@@ -43,9 +45,10 @@ ACTION=""  # start | stop | restart | status
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --token)      REG_TOKEN="$2"; shift 2 ;;
-        --runner-dir) RUNNER_DIR="$2"; shift 2 ;;
-        --runner-name) RUNNER_NAME="$2"; shift 2 ;;
+        --token)        REG_TOKEN="$2"; shift 2 ;;
+        --runner-dir)   RUNNER_DIR="$2"; shift 2 ;;
+        --runner-name)  RUNNER_NAME="$2"; shift 2 ;;
+        --project-file) PROJECT_FILE="$2"; shift 2 ;;
         --check-only) CHECK_ONLY=true; shift ;;
         --start)      ACTION=start; shift ;;
         --stop)       ACTION=stop; shift ;;
@@ -201,6 +204,34 @@ else
     PREREQ_OK=false
 fi
 
+# UE project file (must be an absolute path on this machine; the runner
+# checks out the PlayUnreal *tools* repo, not the game project itself)
+if [ -n "${PROJECT_FILE}" ]; then
+    if [ -f "${PROJECT_FILE}" ]; then
+        ok "UE project file: ${PROJECT_FILE}"
+    else
+        fail "UE project file not found: ${PROJECT_FILE}"
+        PREREQ_OK=false
+    fi
+else
+    # Try to auto-detect from common locations
+    for candidate in \
+        "${HOME}/Documents/Dev/Unreal/UnrealFrog/UnrealFrog.uproject" \
+        "${HOME}/Unreal Projects/UnrealFrog/UnrealFrog.uproject" \
+        "/Users/Shared/UnrealProjects/UnrealFrog/UnrealFrog.uproject"; do
+        if [ -f "${candidate}" ]; then
+            PROJECT_FILE="${candidate}"
+            break
+        fi
+    done
+    if [ -n "${PROJECT_FILE}" ]; then
+        ok "UE project file (auto-detected): ${PROJECT_FILE}"
+    else
+        fail "No .uproject found. Pass --project-file /absolute/path/to/Game.uproject"
+        PREREQ_OK=false
+    fi
+fi
+
 # GitHub CLI (optional but helpful)
 if command -v gh &>/dev/null; then
     ok "GitHub CLI: $(gh --version | head -1)"
@@ -274,18 +305,24 @@ echo ""
 
 ok "Runner configured: ${RUNNER_NAME}"
 
-# ── Set UE_ENGINE_DIR in runner env ───────────────────────────────────────────
+# ── Inject env vars into runner .env ──────────────────────────────────────────
 
-# Inject UE_ENGINE_DIR into the runner's .env file so all jobs see it.
-if [ -n "${UE_FOUND}" ]; then
-    ENV_FILE="${RUNNER_DIR}/.env"
-    if grep -q "^UE_ENGINE_DIR=" "${ENV_FILE}" 2>/dev/null; then
-        sed -i '' "s|^UE_ENGINE_DIR=.*|UE_ENGINE_DIR=${UE_FOUND}|" "${ENV_FILE}"
+# UE_ENGINE_DIR and UE_PROJECT_FILE are injected into the runner's .env so
+# every job on this machine sees the correct paths without needing repo variables.
+ENV_FILE="${RUNNER_DIR}/.env"
+
+set_env_var() {
+    local key="$1" val="$2"
+    if grep -q "^${key}=" "${ENV_FILE}" 2>/dev/null; then
+        sed -i '' "s|^${key}=.*|${key}=${val}|" "${ENV_FILE}"
     else
-        echo "UE_ENGINE_DIR=${UE_FOUND}" >> "${ENV_FILE}"
+        echo "${key}=${val}" >> "${ENV_FILE}"
     fi
-    ok "Set UE_ENGINE_DIR=${UE_FOUND} in runner .env"
-fi
+    ok "Set ${key}=${val} in runner .env"
+}
+
+if [ -n "${UE_FOUND}" ];    then set_env_var "UE_ENGINE_DIR"  "${UE_FOUND}"; fi
+if [ -n "${PROJECT_FILE}" ]; then set_env_var "UE_PROJECT_FILE" "${PROJECT_FILE}"; fi
 
 # ── Install and start launchd service ─────────────────────────────────────────
 
@@ -308,9 +345,8 @@ echo ""
 echo "  Runner name:   ${RUNNER_NAME}"
 echo "  Labels:        ${RUNNER_LABELS}"
 echo "  Runner dir:    ${RUNNER_DIR}"
-if [ -n "${UE_FOUND}" ]; then
-    echo "  UE_ENGINE_DIR: ${UE_FOUND}"
-fi
+if [ -n "${UE_FOUND}" ];    then echo "  UE_ENGINE_DIR:   ${UE_FOUND}"; fi
+if [ -n "${PROJECT_FILE}" ]; then echo "  UE_PROJECT_FILE: ${PROJECT_FILE}"; fi
 echo ""
 echo "  To check status:    cd ${RUNNER_DIR} && ./svc.sh status"
 echo "  To view logs:       tail -f ~/Library/Logs/actions.runner.*/runner.log"
