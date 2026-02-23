@@ -247,13 +247,16 @@ class PlayUnreal:
     def reset_game(self):
         """Reset the game to title screen and start a new game.
 
-        Calls ReturnToTitle, waits for Title state, then StartGame.
+        Calls ReturnToTitle, polls until Title state is confirmed, then
+        StartGame, then polls until Playing. Using wait_for_state avoids
+        fixed sleeps that fail when the machine is slow or the game was
+        in GameOver (which takes longer to clear than a mid-game reset).
         """
         gm_path = self._get_gm_path()
         self._call_function(gm_path, "ReturnToTitle")
-        time.sleep(0.5)
+        self.wait_for_state("Title", timeout=10)
         self._call_function(gm_path, "StartGame")
-        time.sleep(1.5)
+        self.wait_for_state("Playing", timeout=10)
 
     def wait_for_state(self, target_state, timeout=10):
         """Poll get_state() until gameState matches target.
