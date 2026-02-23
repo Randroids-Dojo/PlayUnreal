@@ -1,0 +1,202 @@
+# PlayUnreal CI — Headless feature demonstration using real Unreal Engine.
+#
+# Runs on a self-hosted macOS runner with UE 5.7 installed.
+# Demonstrates every PlayUnreal feature against a live game instance.
+#
+# Required runner labels: self-hosted, macOS, unreal-engine
+#
+# Required environment:
+#   - Unreal Engine 5.7+ installed
+#   - Python 3.9+ with pip
+#   - Project already cloned by the runner
+#
+# Set UE_ENGINE_DIR in the runner environment or repository variables
+# if UE is installed in a non-default location.
+
+name: PlayUnreal CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: "Skip UE build step (use existing binaries)"
+        type: boolean
+        default: false
+      skip_ue_tests:
+        description: "Skip headless UE automation tests"
+        type: boolean
+        default: false
+      timeout_seconds:
+        description: "Editor startup timeout (seconds)"
+        type: number
+        default: 120
+
+env:
+  UE_ENGINE_DIR: ${{ vars.UE_ENGINE_DIR || '/Users/Shared/Epic Games/UE_5.7' }}
+  RC_PORT: "30010"
+
+jobs:
+  # ===========================================================================
+  # Job 1: Lint & Static Checks (runs on any runner — no UE needed)
+  # ===========================================================================
+  lint:
+    name: Lint & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check Python syntax (all .py files)
+        run: |
+          echo "Checking Python syntax..."
+          find . -name "*.py" -print0 | xargs -0 python3 -m py_compile
+          echo "All Python files compile successfully."
+
+      - name: Check shell script syntax
+        run: |
+          echo "Checking shell script syntax..."
+          for f in ci/run-ci.sh Tools/PlayUnreal/*.sh; do
+            if [ -f "$f" ]; then
+              bash -n "$f" && echo "  OK: $f" || { echo "  FAIL: $f"; exit 1; }
+            fi
+          done
+
+      - name: Verify package imports
+        run: |
+          cd python
+          python3 -c "from playunreal import PlayUnreal, PlayUnrealError, RCConnectionError, CallError; print('Package imports OK')"
+
+  # ===========================================================================
+  # Job 2: Full CI Pipeline (requires self-hosted runner with UE)
+  # ===========================================================================
+  full-pipeline:
+    name: Full Feature Demonstration
+    runs-on: [self-hosted, macOS, unreal-engine]
+    needs: lint
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Unreal Engine installation
+        run: |
+          echo "Checking UE at: ${UE_ENGINE_DIR}"
+          if [ ! -d "${UE_ENGINE_DIR}" ]; then
+            echo "::error::Unreal Engine not found at ${UE_ENGINE_DIR}"
+            echo "Set the UE_ENGINE_DIR repository variable to your UE installation path."
+            exit 1
+          fi
+          echo "UE installation found."
+          ls "${UE_ENGINE_DIR}/Engine/Binaries/Mac/" | head -5
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pytest
+
+      - name: Run full CI pipeline
+        run: |
+          ARGS=""
+          if [ "${{ inputs.skip_build }}" = "true" ]; then
+            ARGS="${ARGS} --skip-build"
+          fi
+          if [ "${{ inputs.skip_ue_tests }}" = "true" ]; then
+            ARGS="${ARGS} --skip-ue-tests"
+          fi
+          TIMEOUT="${{ inputs.timeout_seconds }}"
+          if [ -n "${TIMEOUT}" ] && [ "${TIMEOUT}" != "0" ]; then
+            ARGS="${ARGS} --timeout ${TIMEOUT}"
+          fi
+          ./ci/run-ci.sh ${ARGS}
+        env:
+          UE_ENGINE_DIR: ${{ env.UE_ENGINE_DIR }}
+
+      - name: Upload CI artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playunreal-ci-artifacts-${{ github.run_number }}
+          path: |
+            Saved/CI/artifacts/
+            Saved/CI/logs/
+            Saved/CI/ci_report.json
+          retention-days: 14
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playunreal-test-results-${{ github.run_number }}
+          path: |
+            Saved/CI/artifacts/pytest_results.xml
+            Saved/Reports/
+          retention-days: 14
+
+      - name: Print CI summary
+        if: always()
+        run: |
+          echo "## PlayUnreal CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          REPORT="Saved/CI/ci_report.json"
+          if [ -f "${REPORT}" ]; then
+            TOTAL=$(python3 -c "import json; r=json.load(open('${REPORT}')); print(r['total'])")
+            PASSED=$(python3 -c "import json; r=json.load(open('${REPORT}')); print(r['passed'])")
+            FAILED=$(python3 -c "import json; r=json.load(open('${REPORT}')); print(r['failed'])")
+            SCREENSHOTS=$(python3 -c "import json; r=json.load(open('${REPORT}')); print(len(r['screenshots']))")
+
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total checks | ${TOTAL} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Passed | ${PASSED} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failed | ${FAILED} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Screenshots | ${SCREENSHOTS} |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "${FAILED}" -gt 0 ]; then
+              echo "### Failed Checks" >> $GITHUB_STEP_SUMMARY
+              python3 -c "
+          import json
+          r = json.load(open('${REPORT}'))
+          for f in r['failures']:
+              print(f'- {f}')
+          " >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "CI report not found — check pipeline logs." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ===========================================================================
+  # Job 3: Quick Smoke Test (for PRs — faster feedback, game-only)
+  # ===========================================================================
+  smoke-test:
+    name: Quick Smoke Test
+    runs-on: [self-hosted, macOS, unreal-engine]
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: python3 -m pip install pytest
+
+      - name: Run game-only smoke test
+        run: ./ci/run-ci.sh --game-only --timeout 90
+        env:
+          UE_ENGINE_DIR: ${{ env.UE_ENGINE_DIR }}
+
+      - name: Upload smoke test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playunreal-smoke-${{ github.run_number }}
+          path: Saved/CI/
+          retention-days: 7
