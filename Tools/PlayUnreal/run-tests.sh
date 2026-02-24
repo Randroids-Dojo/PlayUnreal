@@ -34,7 +34,7 @@ set -euo pipefail
 ENGINE_DIR="/Users/Shared/Epic Games/UE_5.7"
 EDITOR_CMD="${ENGINE_DIR}/Engine/Binaries/Mac/UnrealEditor-Cmd"
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-PROJECT_FILE="${PROJECT_ROOT}/UnrealFrog.uproject"
+PROJECT_FILE="${UE_PROJECT_FILE:-${PROJECT_ROOT}/UnrealFrog.uproject}"
 LOG_DIR="${PROJECT_ROOT}/Saved/Logs"
 REPORT_DIR="${PROJECT_ROOT}/Saved/Reports"
 TEST_LOG="${LOG_DIR}/TestRunner.log"

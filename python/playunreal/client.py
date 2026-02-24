@@ -247,13 +247,25 @@ class PlayUnreal:
     def reset_game(self):
         """Reset the game to title screen and start a new game.
 
-        Calls ReturnToTitle, waits for Title state, then StartGame.
+        ReturnToTitle starts a transition (fade/level reset) but gameState
+        stays in its previous value throughout — Title is not a stable
+        observable state. Sleep gives the transition time to clear score
+        and state, then wait_for_state("Playing") confirms the game is
+        truly ready before returning.
         """
         gm_path = self._get_gm_path()
-        self._call_function(gm_path, "ReturnToTitle")
-        time.sleep(0.5)
+        # Retry ReturnToTitle until Title is confirmed. From GameOver the
+        # command is ignored until the GameOver screen auto-dismisses, which
+        # can take several seconds. From Playing it resolves in < 0.5s.
+        for _ in range(10):
+            self._call_function(gm_path, "ReturnToTitle")
+            try:
+                self.wait_for_state("Title", timeout=4)
+                break
+            except PlayUnrealError:
+                time.sleep(1.0)
         self._call_function(gm_path, "StartGame")
-        time.sleep(1.5)
+        self.wait_for_state("Playing", timeout=15)
 
     def wait_for_state(self, target_state, timeout=10):
         """Poll get_state() until gameState matches target.
